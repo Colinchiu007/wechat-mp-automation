@@ -5,7 +5,7 @@
 import pytest
 from datetime import datetime
 
-from src.workflows.engine import WorkflowEngine, WorkflowResult
+from src.workflows.engine import WorkflowEngine
 from src.workflows.state_machine import WorkflowStateMachine, WorkflowState
 
 
@@ -111,39 +111,29 @@ class TestWorkflowStateMachine:
 
 class TestWorkflowEngine:
     """测试工作流引擎"""
-    
+
     def test_engine_initialization(self):
         """测试引擎初始化"""
         config = {
-            "workflows": {
-                "default": {
-                    "name": "测试工作流",
-                    "timeout": 3600
-                }
-            }
+            "database": {"path": ":memory:"},
+            "llm": {"provider": "deepseek", "api_key": "test-key"},
         }
-        
         engine = WorkflowEngine(config)
         assert engine is not None
-        assert "default" in engine.workflows
-    
+        assert engine.batch_id == ""
+
+    def test_engine_init_default(self):
+        """测试引擎使用默认配置"""
+        engine = WorkflowEngine()
+        assert engine.config == {}
+
     @pytest.mark.asyncio
-    async def test_run_workflow(self):
-        """测试运行工作流"""
+    async def test_run_workflow_no_sources(self):
+        """测试无数据源时运行工作流"""
         config = {
-            "workflows": {
-                "default": {
-                    "name": "测试工作流",
-                    "timeout": 3600
-                }
-            }
+            "database": {"path": ":memory:"},
+            "llm": {"provider": "deepseek", "api_key": "test-key"},
         }
-        
         engine = WorkflowEngine(config)
-        result = await engine.run("default")
-        
-        assert isinstance(result, WorkflowResult)
-        # 因为没有配置数据源，应该失败
-        # 但至少应该返回结果对象
-        assert result.workflow_id is not None
-        assert result.workflow_name == "default"
+        result = await engine.run()
+        assert "batch_id" in result
