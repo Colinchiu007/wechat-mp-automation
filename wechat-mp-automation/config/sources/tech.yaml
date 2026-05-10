@@ -1,0 +1,30 @@
+# 科技类 RSS 数据源
+sources:
+  - id: "36kr"
+    name: "36氪"
+    type: "rss"
+    url: "https://36kr.com/feed"
+    enabled: true
+    filters:
+      time_range: 7
+      min_words: 300
+      include_keywords: ["AI", "人工智能", "大模型", "GPT", "科技", "创业"]
+      exclude_keywords: ["广告", "推广"]
+      include_mode: "any"
+
+  - id: "huxiu"
+    name: "虎嗅"
+    type: "rss"
+    url: "https://www.huxiu.com/rss/0.xml"
+    enabled: true
+    filters:
+      time_range: 7
+      min_words: 300
+
+  - id: "sspai"
+    name: "少数派"
+    type: "rss"
+    url: "https://sspai.com/feed"
+    enabled: false
+    filters:
+      time_range: 7

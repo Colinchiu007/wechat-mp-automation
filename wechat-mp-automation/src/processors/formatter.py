@@ -1,367 +1,215 @@
 """
-内容格式化器
+内容格式化模块
+- Markdown → 公众号 HTML
+- 排版模板
+- 多平台导出
 """
 
+import json
 import re
-from dataclasses import dataclass
-from enum import Enum
+import uuid
+from pathlib import Path
 from typing import Any
 
+from loguru import logger
 
-class OutputFormat(Enum):
-    """输出格式"""
-    MARKDOWN = "markdown"
-    HTML = "html"
-    TEXT = "text"
-    WECHAT = "wechat"
-    XIAOHONGSHU = "xiaohongshu"
-    DOUYIN = "douyin"
-    YOUTUBE = "youtube"
+from src.storage.database import Database
 
 
-@dataclass
-class FormatConfig:
-    """格式化配置"""
-    format: OutputFormat = OutputFormat.MARKDOWN
-    template: str | None = None
-    include_cover: bool = True
-    include_description: bool = True
-    add_toc: bool = False
-    heading_style: str = "atx"
-    max_paragraph_length: int = 500
+# 公众号 HTML 排版样式（极简模板）
+WECHAT_TEMPLATE = """
+<div style="max-width: 677px; margin: 0 auto; padding: 20px 16px; font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif; font-size: 16px; line-height: 1.8; color: #333; word-wrap: break-word;">
+
+{content}
+
+</div>
+"""
+
+# 段落样式
+PARAGRAPH_STYLE = 'style="margin-bottom: 1.2em; text-align: justify;"'
+# 标题样式
+H2_STYLE = 'style="font-size: 20px; font-weight: bold; color: #1a1a1a; margin: 1.5em 0 0.8em; padding-bottom: 0.3em; border-bottom: 2px solid #e8e8e8;"'
+H3_STYLE = 'style="font-size: 18px; font-weight: bold; color: #333; margin: 1.2em 0 0.6em;"'
+# 引用样式
+BLOCKQUOTE_STYLE = 'style="margin: 1em 0; padding: 12px 16px; background: #f7f7f7; border-left: 4px solid #ddd; color: #666; font-size: 15px;"'
+# 代码块样式
+CODE_BLOCK_STYLE = 'style="margin: 1em 0; padding: 16px; background: #f5f5f5; border-radius: 4px; font-family: Menlo, Monaco, Consolas, monospace; font-size: 14px; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word;"'
+# 行内代码样式
+INLINE_CODE_STYLE = 'style="background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-family: monospace; font-size: 14px; color: #c7254e;"'
+# 粗体样式
+BOLD_STYLE = 'style="font-weight: bold; color: #1a1a1a;"'
+# 图片样式
+IMAGE_STYLE = 'style="max-width: 100%; height: auto; display: block; margin: 1em auto; border-radius: 4px;"'
+# 列表样式
+UL_STYLE = 'style="margin: 1em 0; padding-left: 2em;"'
+OL_STYLE = 'style="margin: 1em 0; padding-left: 2em;"'
+LI_STYLE = 'style="margin-bottom: 0.5em; line-height: 1.8;"'
+
+
+def markdown_to_wechat_html(md_text: str, images: list[dict] | None = None) -> str:
+    """
+    将 Markdown 转换为公众号 HTML
+    images: [{path: "本地路径", position: 1(在第几段之后插入), url: "微信URL(可选)"}]
+    """
+    html = md_text
+
+    # 1. 代码块（先处理，避免内部被其他规则干扰）
+    html = re.sub(
+        r'```(\w*)\n(.*?)```',
+        lambda m: f'<pre {CODE_BLOCK_STYLE}><code>{_escape_html(m.group(2))}</code></pre>',
+        html,
+        flags=re.DOTALL,
+    )
+
+    # 2. 行内代码
+    html = re.sub(
+        r'`([^`]+)`',
+        lambda m: f'<code {INLINE_CODE_STYLE}>{_escape_html(m.group(1))}</code>',
+        html,
+    )
+
+    # 3. 引用块
+    html = re.sub(
+        r'^>\s*(.+)$',
+        lambda m: f'<blockquote {BLOCKQUOTE_STYLE}>{m.group(1)}</blockquote>',
+        html,
+        flags=re.MULTILINE,
+    )
+
+    # 4. 标题
+    html = re.sub(r'^###\s+(.+)$', lambda m: f'<h3 {H3_STYLE}>{m.group(1)}</h3>', html, flags=re.MULTILINE)
+    html = re.sub(r'^##\s+(.+)$', lambda m: f'<h2 {H2_STYLE}>{m.group(1)}</h2>', html, flags=re.MULTILINE)
+    html = re.sub(r'^#\s+(.+)$', lambda m: f'<h1 {H2_STYLE}>{m.group(1)}</h1>', html, flags=re.MULTILINE)
+
+    # 5. 粗体和斜体
+    html = re.sub(r'\*\*(.+?)\*\*', lambda m: f'<strong {BOLD_STYLE}>{m.group(1)}</strong>', html)
+    html = re.sub(r'\*(.+?)\*', lambda m: f'<em>{m.group(1)}</em>', html)
+
+    # 6. 链接
+    html = re.sub(
+        r'\[([^\]]+)\]\(([^)]+)\)',
+        lambda m: f'<a href="{m.group(2)}" style="color: #576b95; text-decoration: none;">{m.group(1)}</a>',
+        html,
+    )
+
+    # 7. 无序列表
+    html = re.sub(r'^[-*]\s+(.+)$', lambda m: f'<li {LI_STYLE}>{m.group(1)}</li>', html, flags=re.MULTILINE)
+    # 包裹 <ul>
+    html = re.sub(
+        r'(<li[^>]*>.*?</li>(?:\n<li[^>]*>.*?</li>)*)',
+        lambda m: f'<ul {UL_STYLE}>{m.group(1)}</ul>',
+        html,
+        flags=re.DOTALL,
+    )
+
+    # 8. 有序列表
+    html = re.sub(r'^\d+\.\s+(.+)$', lambda m: f'<li {LI_STYLE}>{m.group(1)}</li>', html, flags=re.MULTILINE)
+
+    # 9. 水平线
+    html = re.sub(r'^---+$', '<hr style="border: none; border-top: 1px solid #e8e8e8; margin: 2em 0;">', html, flags=re.MULTILINE)
+
+    # 10. 段落处理（将连续纯文本包裹为 <p>）
+    lines = html.split('\n')
+    processed_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            processed_lines.append('')
+        elif stripped.startswith('<'):
+            processed_lines.append(stripped)
+        else:
+            processed_lines.append(f'<p {PARAGRAPH_STYLE}>{stripped}</p>')
+
+    html = '\n'.join(processed_lines)
+
+    # 11. 插入图片
+    if images:
+        img_idx = 0
+        para_count = 0
+        result_lines = []
+        for line in html.split('\n'):
+            result_lines.append(line)
+            if '<p ' in line or '<h' in line:
+                para_count += 1
+                # 检查是否需要在此处插图
+                while img_idx < len(images) and images[img_idx].get("position") == para_count:
+                    img = images[img_idx]
+                    src = img.get("url", img.get("path", ""))
+                    alt = img.get("alt", "")
+                    result_lines.append(f'<img src="{src}" alt="{alt}" {IMAGE_STYLE} />')
+                    img_idx += 1
+
+        html = '\n'.join(result_lines)
+
+    # 12. 清理多余空行
+    html = re.sub(r'\n{3,}', '\n\n', html)
+
+    # 包裹在模板中
+    return WECHAT_TEMPLATE.format(content=html)
+
+
+def _escape_html(text: str) -> str:
+    """HTML 转义"""
+    text = text.replace('&', '&amp;')
+    text = text.replace('<', '&lt;')
+    text = text.replace('>', '&gt;')
+    return text
 
 
 class ContentFormatter:
-    """内容格式化器"""
-    
-    def __init__(self, config: dict[str, Any] = None):
+    """内容格式化器——模块C的核心"""
+
+    def __init__(self, db: Database, config: dict | None = None):
+        self.db = db
         self.config = config or {}
-    
-    def format(
-        self,
-        title: str,
-        content: str,
-        summary: str = "",
-        images: list[str] = None,
-        config: FormatConfig | None = None
-    ) -> str:
-        """格式化内容"""
-        if config is None:
-            config = FormatConfig()
-        
-        if images is None:
-            images = []
-        
-        if config.format == OutputFormat.MARKDOWN:
-            return self._format_markdown(title, content, summary, images, config)
-        elif config.format == OutputFormat.HTML:
-            return self._format_html(title, content, summary, images, config)
-        elif config.format == OutputFormat.WECHAT:
-            return self._format_wechat(title, content, summary, images, config)
-        elif config.format == OutputFormat.XIAOHONGSHU:
-            return self._format_xiaohongshu(title, content, images, config)
-        elif config.format == OutputFormat.DOUYIN:
-            return self._format_douyin(title, content, config)
-        elif config.format == OutputFormat.YOUTUBE:
-            return self._format_youtube(title, content, summary, config)
-        else:
-            return content
-    
-    def _format_markdown(
-        self,
-        title: str,
-        content: str,
-        summary: str,
-        images: list[str],
-        config: FormatConfig
-    ) -> str:
-        """格式化为 Markdown"""
-        lines = []
-        
-        # 标题
-        lines.append(f"# {title}\n")
-        
-        # 摘要
-        if summary and config.include_description:
-            lines.append(f"> {summary}\n")
-        
-        # 目录
-        if config.add_toc:
-            lines.append(self._generate_toc(content))
-        
-        # 封面图
-        if images and config.include_cover:
-            lines.append(f"![封面]({images[0]})\n")
-        
-        # 正文
-        formatted_content = self._format_paragraphs(content, config)
-        lines.append(formatted_content)
-        
-        # 其他图片
-        if len(images) > 1:
-            lines.append("\n## 图片\n")
-            for i, img in enumerate(images[1:], 1):
-                lines.append(f"图{i}：![图片{i}]({img})")
-        
-        return "\n".join(lines)
-    
-    def _format_html(
-        self,
-        title: str,
-        content: str,
-        summary: str,
-        images: list[str],
-        config: FormatConfig
-    ) -> str:
-        """格式化为 HTML"""
-        lines = [
-            "<!DOCTYPE html>",
-            "<html>",
-            "<head>",
-            f"<title>{title}</title>",
-            "<meta charset='utf-8'>",
-            "<style>",
-            "body { font-family: Arial, sans-serif; line-height: 1.6; max-width: 800px; margin: 0 auto; padding: 20px; }",
-            "h1 { color: #333; }",
-            "blockquote { border-left: 4px solid #ddd; margin: 0; padding-left: 16px; color: #666; }",
-            "img { max-width: 100%; }",
-            "</style>",
-            "</head>",
-            "<body>",
-            f"<h1>{title}</h1>",
-        ]
-        
-        if summary and config.include_description:
-            lines.append(f"<blockquote>{summary}</blockquote>")
-        
-        if images and config.include_cover:
-            lines.append(f"<img src='{images[0]}' alt='封面'>")
-        
-        # 转换 Markdown 为 HTML
-        html_content = self._markdown_to_html(content)
-        lines.append(html_content)
-        
-        lines.extend(["</body>", "</html>"])
-        
-        return "\n".join(lines)
-    
-    def _format_wechat(
-        self,
-        title: str,
-        content: str,
-        summary: str,
-        images: list[str],
-        config: FormatConfig
-    ) -> str:
-        """格式化为微信公众号格式"""
-        lines = []
-        
-        # 标题
-        lines.append(f"**{title}**\n")
-        
-        # 摘要
-        if summary:
-            lines.append(f"_{summary}_\n")
-        
-        # 格式化内容
-        formatted_content = self._format_paragraphs(content, config)
-        
-        # 处理图片引用（转换为微信格式）
-        formatted_content = self._convert_images_for_wechat(formatted_content, images)
-        
-        lines.append(formatted_content)
-        
-        return "\n".join(lines)
-    
-    def _format_xiaohongshu(
-        self,
-        title: str,
-        content: str,
-        images: list[str],
-        config: FormatConfig
-    ) -> str:
-        """格式化为小红书格式"""
-        lines = []
-        
-        # 标题
-        lines.append(f"## {title}\n")
-        
-        # 封面图
-        if images:
-            lines.append(f"[图片]\n")
-        
-        # 简短内容（小红书限制1000字）
-        max_length = 1000
-        if len(content) > max_length:
-            content = content[:max_length] + "..."
-        
-        lines.append(content)
-        
-        # 标签
-        lines.append("\n\n#标签1 #标签2 #标签3")
-        
-        return "\n".join(lines)
-    
-    def _format_douyin(
-        self,
-        title: str,
-        content: str,
-        config: FormatConfig
-    ) -> str:
-        """格式化为抖音脚本格式"""
-        lines = [
-            f"# {title}",
-            "",
-            "## 开头（3秒抓眼球）",
-            self._extract_opening_hook(content),
-            "",
-            "## 正文",
-            self._format_script_content(content),
-            "",
-            "## 结尾引导互动",
-            "关注我，获取更多精彩内容！",
-            "评论区告诉我你的想法...",
-        ]
-        
-        return "\n".join(lines)
-    
-    def _format_youtube(
-        self,
-        title: str,
-        content: str,
-        summary: str,
-        config: FormatConfig
-    ) -> str:
-        """格式化为 YouTube 脚本格式"""
-        lines = [
-            f"# {title}",
-            "",
-            "## 描述 (Description)",
-            summary or content[:5000],
-            "",
-            "## 标签 (Tags)",
-            "#shorts #youtube #vlog #trending",
-        ]
-        
-        return "\n".join(lines)
-    
-    def _format_paragraphs(self, content: str, config: FormatConfig) -> str:
-        """格式化段落"""
-        paragraphs = content.split("\n\n")
-        formatted = []
-        
-        for para in paragraphs:
-            para = para.strip()
-            if not para:
-                continue
-            
-            # 处理标题
-            if para.startswith("#"):
-                formatted.append(para)
-            # 处理列表
-            elif para.startswith("- ") or para.startswith("* "):
-                formatted.append(para)
-            # 处理引用
-            elif para.startswith(">"):
-                formatted.append(para)
-            # 普通段落
-            else:
-                # 分割过长的段落
-                if len(para) > config.max_paragraph_length:
-                    sub_paragraphs = self._split_long_paragraph(para, config.max_paragraph_length)
-                    formatted.extend(sub_paragraphs)
-                else:
-                    formatted.append(para)
-        
-        return "\n\n".join(formatted)
-    
-    def _split_long_paragraph(self, text: str, max_length: int) -> list[str]:
-        """分割过长的段落"""
-        sentences = re.split(r"([。！？；\n])", text)
-        result = []
-        current = ""
-        
-        for i in range(0, len(sentences), 2):
-            sentence = sentences[i]
-            if i + 1 < len(sentences):
-                sentence += sentences[i + 1]
-            
-            if len(current) + len(sentence) <= max_length:
-                current += sentence
-            else:
-                if current:
-                    result.append(current)
-                current = sentence
-        
-        if current:
-            result.append(current)
-        
+        self.template = self.config.get("template", "minimal")
+        self.image_config = self.config.get("image", {})
+
+    async def format_article(self, rewrite_data: dict) -> dict:
+        """
+        将改写结果格式化为公众号文章
+        rewrite_data: rewrites 表的记录
+        """
+        content = rewrite_data.get("content", "")
+        title = rewrite_data.get("title", "")
+
+        # 如果内容不是 Markdown，跳过转换
+        # 大部分改写输出是纯文本/Markdown混合，统一走 Markdown 转换
+        images = []
+        image_paths = self.image_config.get("paths", [])
+        for i, img_path in enumerate(image_paths):
+            if Path(img_path).exists():
+                # 每隔3段插一张
+                position = (i + 1) * 3
+                images.append({"path": img_path, "position": position, "alt": title})
+
+        html = markdown_to_wechat_html(content, images)
+
+        # 格式化结果
+        result = {
+            "id": str(uuid.uuid4()),
+            "rewrite_id": rewrite_data["id"],
+            "format": "wechat_mp",
+            "html": html,
+            "cover_image": self.image_config.get("cover", None),
+            "images": json.dumps(images, ensure_ascii=False),
+            "exports": json.dumps({}, ensure_ascii=False),
+        }
+
+        # 存入数据库
+        await self.db.insert_formatted(result)
+        logger.info(f"Article formatted: {title} (format=wechat_mp)")
         return result
-    
-    def _generate_toc(self, content: str) -> str:
-        """生成目录"""
-        lines = ["## 目录\n"]
-        headers = re.findall(r"^#{1,3}\s+(.+)$", content, re.MULTILINE)
-        
-        for i, header in enumerate(headers, 1):
-            level = header.count("#")
-            indent = "  " * (level - 1)
-            lines.append(f"{indent}{i}. [{header}](#{header})")
-        
-        lines.append("")
-        return "\n".join(lines)
-    
-    def _markdown_to_html(self, markdown: str) -> str:
-        """Markdown 转 HTML"""
-        html = markdown
-        
-        # 标题
-        html = re.sub(r"^### (.+)$", r"<h3>\1</h3>", html, flags=re.MULTILINE)
-        html = re.sub(r"^## (.+)$", r"<h2>\1</h2>", html, flags=re.MULTILINE)
-        html = re.sub(r"^# (.+)$", r"<h1>\1</h1>", html, flags=re.MULTILINE)
-        
-        # 粗体和斜体
-        html = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", html)
-        html = re.sub(r"\*(.+?)\*", r"<em>\1</em>", html)
-        
-        # 段落
-        html = re.sub(r"\n\n", "</p><p>", html)
-        html = f"<p>{html}</p>"
-        
-        # 换行
-        html = html.replace("\n", "<br>")
-        
-        return html
-    
-    def _convert_images_for_wechat(self, content: str, images: list[str]) -> str:
-        """转换图片引用为微信格式"""
-        if not images:
-            return content
-        
-        # 将 ![alt](url) 格式转换为微信图片格式
-        for i, img_url in enumerate(images):
-            placeholder = f"[图片{i+1}]"
-            content = content.replace(f"![图片{i+1}]({img_url})", placeholder)
-            content = content.replace(f"![alt]({img_url})", placeholder)
-        
-        return content
-    
-    def _extract_opening_hook(self, content: str) -> str:
-        """提取开头钩子"""
-        # 取前100字作为开头
-        first_para = content.split("\n")[0][:100]
-        if len(first_para) < 100 and len(content.split("\n")) > 1:
-            first_para += content.split("\n")[1][:100 - len(first_para)]
-        return first_para + "..."
-    
-    def _format_script_content(self, content: str) -> str:
-        """格式化脚本内容"""
-        # 添加场景描述
-        lines = content.split("\n")
-        formatted = []
-        
-        for i, line in enumerate(lines, 1):
-            if line.strip():
-                formatted.append(f"{i}. {line}")
-        
-        return "\n".join(formatted)
+
+    async def export_markdown(self, rewrite_data: dict, output_dir: str = "./output/exports") -> str:
+        """导出为 Markdown 文件"""
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        title = rewrite_data.get("title", "untitled")
+        # 文件名安全化
+        safe_title = re.sub(r'[\\/:*?"<>|]', '_', title)[:50]
+        filepath = Path(output_dir) / f"{safe_title}.md"
+
+        content = f"# {title}\n\n{rewrite_data.get('content', '')}"
+        filepath.write_text(content, encoding="utf-8")
+        logger.info(f"Exported markdown: {filepath}")
+        return str(filepath)

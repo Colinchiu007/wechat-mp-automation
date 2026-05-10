@@ -26,6 +26,11 @@ class RSSSource(BaseSource):
         start_time = time.time()
         
         urls = self.config.config.get("urls", [])
+        # 兼容单 url 配置
+        single_url = self.config.config.get("url")
+        if single_url and not urls:
+            urls = [single_url]
+        
         if not urls:
             return SourceResult(
                 success=False,
@@ -119,6 +124,10 @@ class RSSSource(BaseSource):
     async def test(self) -> TestResult:
         """测试 RSS 源"""
         urls = self.config.config.get("urls", [])
+        single_url = self.config.config.get("url")
+        if single_url and not urls:
+            urls = [single_url]
+        
         if not urls:
             return TestResult(
                 success=False,
