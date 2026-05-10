@@ -1,0 +1,98 @@
+# 微信公众号自动化 - 主配置文件
+
+app:
+  name: "wechat-mp-automation"
+  version: "1.0.0"
+  env: "development"
+
+# 数据库配置
+database:
+  type: "sqlite"
+  path: "./data/content.db"
+  # mysql/postgres 配置（未来支持）
+  # host: "localhost"
+  # port: 3306
+  # database: "automation"
+  # username: "xxx"
+  # password: "xxx"
+
+# LLM 配置
+llm:
+  provider: "openai"  # openai | anthropic | qwen | deepseek
+  api_key: "${OPENAI_API_KEY}"  # 从环境变量读取
+  model: "gpt-4o"
+  base_url: "https://api.openai.com/v1"
+  timeout: 120
+  retry: 3
+  max_tokens: 4096
+
+# 图像生成配置
+image_gen:
+  default_provider: "dalle"  # dalle | midjourney | stable_diffusion | flux
+  providers:
+    dalle:
+      api_key: "${DALLE_API_KEY}"
+      default_size: "1024x1024"
+      default_quality: "standard"
+    unsplash:
+      api_key: "${UNSPLASH_API_KEY}"
+    pexels:
+      api_key: "${PEXELS_API_KEY}"
+
+# 存储配置
+storage:
+  type: "local"  # local | oss | s3
+  path: "./output"
+  # OSS 配置（未来支持）
+  # bucket: "xxx"
+  # endpoint: "xxx"
+  # access_key: "xxx"
+  # secret_key: "xxx"
+
+# 日志配置
+logging:
+  level: "INFO"  # DEBUG | INFO | WARNING | ERROR
+  file: "./logs/app.log"
+  max_size: "100MB"
+  backup_count: 5
+  format: "text"  # json | text
+  rotation: "daily"  # daily | size
+
+# 监控配置
+monitoring:
+  enabled: true
+  metrics_port: 9090
+  health_check_port: 8080
+
+# 告警配置
+alerts:
+  enabled: false
+  channels:
+    - type: "feishu"
+      webhook: "${FEISHU_WEBHOOK}"
+
+# 默认工作流配置
+workflows:
+  default:
+    name: "默认工作流"
+    timeout: 3600  # 秒
+
+# 默认采集配置
+collection:
+  time_range: 30  # 天
+  max_content_length: 50000  # 最大内容长度
+  retry: 3
+
+# 默认改写配置
+rewrite:
+  default_strategy: "rewrite"
+  default_style: "default"
+  min_word_count: 500
+  max_word_count: 5000
+  target_word_count: 3000
+
+# 默认配图配置
+image:
+  default_count: 3
+  default_strategy: "auto"
+  max_images: 10

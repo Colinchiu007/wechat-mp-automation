@@ -1,0 +1,55 @@
+[project]
+name = "wechat-mp-automation"
+version = "1.0.0"
+description = "跨平台内容自动化 - 自动搜集信息 → AI改写 → 多平台发布"
+authors = [
+    {name = "Colinchiu007"}
+]
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0",
+    "feedparser>=6.0",
+    "requests>=2.31.0",
+    "httpx>=0.25.0",
+    "beautifulsoup4>=4.12.0",
+    "playwright>=1.40.0",
+    "python-dateutil>=2.8.0",
+    "jinja2>=3.1.0",
+    "apscheduler>=3.10.0",
+    "sqlalchemy>=2.0.0",
+    "aiosqlite>=0.19.0",
+    "pydantic>=2.5.0",
+    "loguru>=0.7.0",
+    "tenacity>=8.2.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.0",
+    "mypy>=1.7.0",
+    "pre-commit>=3.5.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
