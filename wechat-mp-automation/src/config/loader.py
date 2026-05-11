@@ -87,6 +87,24 @@ class Config(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
     alerts: AlertsConfig = Field(default_factory=AlertsConfig)
+    # Phase 1 扩展字段（config.yaml 中有但 Config 类未定义）
+    rewrite: dict = Field(default_factory=dict)
+    format: dict = Field(default_factory=dict)
+    accounts: list = Field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        """导出为普通 dict，兼容 config.get() 调用方式"""
+        return self.model_dump()
+
+    def get(self, key: str, default=None):
+        """兼容 config.get('key') 调用方式（用于 dict 风格配置访问）"""
+        d = self.to_dict()
+        val = d.get(key, default)
+        # llm/account 等字段是 Pydantic 模型，转回 dict 保持接口兼容
+        if key in ("llm", "accounts", "rewrite", "format", "database", "storage", "logging"):
+            if hasattr(val, "model_dump"):
+                return val.model_dump()
+        return val
 
 
 class ConfigLoader:
